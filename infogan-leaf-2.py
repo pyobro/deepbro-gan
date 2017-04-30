@@ -1,9 +1,31 @@
 import tensorflow as tf
-from tensorflow.examples.tutorials.mnist import input_data
 import numpy as np
+import cv2
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import os
+from random import shuffle
+from tqdm import tqdm
+
+TRAIN_DIR = 'images/'
+IMG_SIZE = 50
+
+
+def create_train_data():
+    training_data = []
+    for img in tqdm(os.listdir(TRAIN_DIR)):
+        path = os.path.join(TRAIN_DIR, img)
+        img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+        if img is None: continue
+        img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
+        training_data.append([np.array(img)])
+    shuffle(training_data)
+    np.save('train_data.npy', training_data)
+    return training_data
+
+
+# train_data = create_train_data()
+leaf_data = np.load('train_data.npy')
 
 
 def xavier_init(size):
@@ -22,7 +44,6 @@ D_b2 = tf.Variable(tf.zeros(shape=[1]))
 
 theta_D = [D_W1, D_W2, D_b1, D_b2]
 
-
 Z = tf.placeholder(tf.float32, shape=[None, 16])
 c = tf.placeholder(tf.float32, shape=[None, 10])
 
@@ -33,7 +54,6 @@ G_W2 = tf.Variable(xavier_init([256, 784]))
 G_b2 = tf.Variable(tf.zeros(shape=[784]))
 
 theta_G = [G_W1, G_W2, G_b1, G_b2]
-
 
 Q_W1 = tf.Variable(xavier_init([784, 128]))
 Q_b1 = tf.Variable(tf.zeros(shape=[128]))
@@ -49,7 +69,7 @@ def sample_Z(m, n):
 
 
 def sample_c(m):
-    return np.random.multinomial(1, 10*[0.1], size=m)
+    return np.random.multinomial(1, 10 * [0.1], size=m)
 
 
 def generator(z, c):
@@ -111,18 +131,16 @@ Q_solver = tf.train.AdamOptimizer().minimize(Q_loss, var_list=theta_G + theta_Q)
 mb_size = 32
 Z_dim = 16
 
-mnist = input_data.read_data_sets('../../MNIST_data', one_hot=True)
-
 sess = tf.Session()
 sess.run(tf.global_variables_initializer())
 
-if not os.path.exists('out/'):
-    os.makedirs('out/')
+if not os.path.exists('output/'):
+    os.mkdir('output/')
 
 i = 0
 
-for it in range(1000000):
-    if it % 1000 == 0:
+for step in range(10000):
+    if step % 1000 == 0:
         Z_noise = sample_Z(16, Z_dim)
 
         idx = np.random.randint(0, 10)
@@ -133,24 +151,29 @@ for it in range(1000000):
                            feed_dict={Z: Z_noise, c: c_noise})
 
         fig = plot(samples)
-        plt.savefig('out/{}.png'.format(str(i).zfill(3)), bbox_inches='tight')
+        plt.savefig('output/{}.png'.format(str(i).zfill(3)), bbox_inches='tight')
         i += 1
         plt.close(fig)
 
-    X_mb, _ = mnist.train.next_batch(mb_size)
-    Z_noise = sample_Z(mb_size, Z_dim)
-    c_noise = sample_c(mb_size)
+    train_init = 0
 
-    _, D_loss_curr = sess.run([D_solver, D_loss],
-                              feed_dict={X: X_mb, Z: Z_noise, c: c_noise})
+    for X_mb in range(len(leaf_data)):
+        X_mb = leaf_data[train_init, train_init + mb_size]
+        Z_noise = sample_Z(mb_size, Z_dim)
+        c_noise = sample_c(mb_size)
 
-    _, G_loss_curr = sess.run([G_solver, G_loss],
-                              feed_dict={Z: Z_noise, c: c_noise})
+        _, D_loss_curr = sess.run([D_solver, D_loss],
+                                  feed_dict={X: X_mb, Z: Z_noise, c: c_noise})
 
-    sess.run([Q_solver], feed_dict={Z: Z_noise, c: c_noise})
+        _, G_loss_curr = sess.run([G_solver, G_loss],
+                                  feed_dict={Z: Z_noise, c: c_noise})
 
-    if it % 1000 == 0:
-        print('Iter: {}'.format(it))
-        print('D loss: {:.4}'. format(D_loss_curr))
+        sess.run([Q_solver], feed_dict={Z: Z_noise, c: c_noise})
+        train_init = train_init + mb_size
+        X_mb = X_mb + mb_size
+
+    if step % 1000 == 0:
+        print('Iter: {}'.format(step))
+        print('D_loss: {:.4}'.format(D_loss_curr))
         print('G_loss: {:.4}'.format(G_loss_curr))
         print()
